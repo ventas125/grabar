@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>TIVA · Mensaje de voz</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;font-family:-apple-system,"Segoe UI",Roboto,Arial,sans-serif;background:#efeae2;color:#111b21}
+.top{background:#075e54;color:#fff;padding:14px 16px;font-weight:700;font-size:18px}
+.c{max-width:480px;margin:0 auto;padding:28px 20px;text-align:center}
+#est{font-size:16px;color:#3b4a54;min-height:48px;margin:0 0 20px}
+#rec{width:120px;height:120px;border-radius:50%;border:0;background:#c2185b;color:#fff;font-size:52px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.2)}
+#rec.on{background:#d32f2f;animation:lat 1s infinite}
+@keyframes lat{50%{transform:scale(1.08)}}
+audio{width:100%;margin-top:22px}
+.acc{display:flex;gap:10px;margin-top:22px}
+.acc button{flex:1;padding:15px;border-radius:12px;font-size:17px;font-weight:700;border:0;cursor:pointer}
+#env{background:#c2185b;color:#fff}
+#env:disabled{opacity:.45}
+#otra{background:#e9edef;color:#3b4a54}
+.ok{font-size:60px;margin:10px 0}
+.sub{color:#667781;font-size:14px;margin-top:22px}
+</style>
+</head>
+<body>
+<div class="top">🎤 Mensaje de voz · TIVA Administración</div>
+<div class="c" id="c">
+  <p id="est">Tocá el micrófono para grabar</p>
+  <button id="rec">🎤</button>
+  <audio id="prev" controls hidden></audio>
+  <div class="acc"><button id="otra" hidden>Grabar de nuevo</button><button id="env" disabled>Enviar</button></div>
+  <p class="sub">Cuando se envíe, volvé al chat.</p>
+</div>
+<script>
+var API = 'https://script.google.com/macros/s/AKfycbzI9NTjmDUEXo9jy2qxAx1RplCDTkXUCi-gOeJYNz4RJLPstBxUs13wGWpR_bvpdOt-pg/exec';
+var P = new URLSearchParams(location.search), K = P.get('k') || '', ET = P.get('e') || '';
+var est = document.getElementById('est'), rec = document.getElementById('rec'), prev = document.getElementById('prev');
+var env = document.getElementById('env'), otra = document.getElementById('otra');
+var mr = null, chunks = [], blob = null, t0 = 0, timer = null, stream = null;
+
+if (!K) {
+  document.getElementById('c').innerHTML = '<p id="est">Abrí esta pantalla desde el botón 🎤 del chat.</p>';
+}
+
+function tipoSoportado() {
+  var t = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg'];
+  for (var i = 0; i < t.length; i++) if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t[i])) return t[i];
+  return '';
+}
+
+function empezar() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+    est.textContent = 'Este celular no deja grabar desde el navegador. Probá abrir el link con Safari o Chrome.';
+    return;
+  }
+  navigator.mediaDevices.getUserMedia({ audio: true }).then(function (st) {
+    stream = st; chunks = []; blob = null;
+    var mt = tipoSoportado();
+    mr = mt ? new MediaRecorder(st, { mimeType: mt }) : new MediaRecorder(st);
+    mr.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+    mr.onstop = function () {
+      clearInterval(timer);
+      st.getTracks().forEach(function (t) { t.stop(); });
+      blob = new Blob(chunks, { type: mr.mimeType || mt || 'audio/mp4' });
+      rec.classList.remove('on'); rec.textContent = '🎤'; rec.hidden = true;
+      prev.src = URL.createObjectURL(blob); prev.hidden = false;
+      otra.hidden = false; env.disabled = false;
+      est.textContent = 'Escuchalo y tocá Enviar';
+    };
+    mr.start(); t0 = Date.now();
+    rec.classList.add('on'); rec.textContent = '⏹'; env.disabled = true;
+    timer = setInterval(function () {
+      var s = Math.floor((Date.now() - t0) / 1000);
+      est.textContent = '🔴 Grabando… ' + Math.floor(s / 60) + ':' + ('0' + s % 60).slice(-2) + ' — tocá ⏹ para terminar';
+      if (s >= 180 && mr.state === 'recording') mr.stop();
+    }, 300);
+  }).catch(function () {
+    est.textContent = 'Necesito permiso para usar el micrófono. Tocá "Permitir" cuando lo pida, o activalo en la configuración del navegador.';
+  });
+}
+
+rec.onclick = function () {
+  if (mr && mr.state === 'recording') { mr.stop(); return; }
+  empezar();
+};
+
+otra.onclick = function () {
+  prev.hidden = true; otra.hidden = true; rec.hidden = false; env.disabled = true; blob = null;
+  est.textContent = 'Tocá el micrófono para grabar';
+};
+
+env.onclick = function () {
+  if (!blob) return;
+  env.disabled = true; otra.hidden = true; env.textContent = 'Enviando…';
+  est.textContent = 'Enviando el audio…';
+  var fr = new FileReader();
+  fr.onload = function () {
+    var b64 = String(fr.result).split(',')[1];
+    fetch(API, { method: 'POST', body: JSON.stringify({ accion: 'audio', k: K, e: ET, b64: b64, mime: blob.type || 'audio/mp4' }) })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j.ok) throw new Error(j.error || 'Error');
+        document.getElementById('c').innerHTML = '<div class="ok">✅</div><p id="est">Audio enviado.<br>Ya podés volver al chat.</p>';
+        setTimeout(function () { try { window.close(); } catch (e) {} }, 1500);
+      })
+      .catch(function (e) {
+        env.disabled = false; otra.hidden = false; env.textContent = 'Enviar';
+        est.textContent = 'No se pudo enviar (' + e.message + '). Probá de nuevo.';
+      });
+  };
+  fr.readAsDataURL(blob);
+};
+</script>
+</body>
+</html>
